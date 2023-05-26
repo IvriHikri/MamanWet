@@ -26,7 +26,19 @@ def createTables():
                      "CREATE TABLE RAM("
                      "id INTEGER PRIMARY KEY CHECK(id > 0),"
                      " size INTEGER NOT NULL CHECK(size > 0),"
-                     " company TEXT NOT NULL)")
+                     " company TEXT NOT NULL);"
+                     "CREATE TABLE Photos_In_Disk("
+                     "photo_id INTEGER CHECK ( photo_id > 0 ),"
+                     "disk_id INTEGER CHECK ( disk_id > 0 ),"
+                     "FOREIGN KEY (photo_id) REFERENCES Photos(id) ON DELETE CASCADE ,"
+                     "FOREIGN KEY (disk_id) REFERENCES  Disk(id) ON DELETE CASCADE ,"
+                     "PRIMARY KEY (photo_id, disk_id));"
+                     "CREATE TABLE Ram_In_Disk("
+                     "ram_id INTEGER CHECK ( ram_id > 0 ),"
+                     "disk_id INTEGER CHECK ( disk_id > 0 ),"
+                     "FOREIGN KEY (ram_id) REFERENCES RAM (id) ON DELETE CASCADE ,"
+                     "FOREIGN KEY (disk_id) REFERENCES Disk (id) ON DELETE CASCADE ,"
+                     "PRIMARY KEY (ram_id, disk_id));")
         conn.commit()
     except DatabaseException.ConnectionInvalid as e:
         print(e)
@@ -378,20 +390,96 @@ def addDiskAndPhoto(disk: Disk, photo: Photo) -> ReturnValue:
 
 
 def addPhotoToDisk(photo: Photo, diskID: int) -> ReturnValue:
-    return ReturnValue.OK
+    conn = None
+    try:
+        conn = Connector.DBConnector()
+        query = sql.SQL(
+            "INSERT INTO Photos_In_Disk VALUES ({photo_id}, {disk_id});"
+            "UPDATE Disk SET free_space = free_space - {photo_size} WHERE id = {disk_id}") \
+            .format(photo_id=sql.Literal(photo.getPhotoID()), disk_id=sql.Literal(diskID),
+                    photo_size=sql.Literal(photo.getSize()))
+        rows_effected, _ = conn.execute(query)
+        conn.commit()
+    except DatabaseException.ConnectionInvalid as e:
+        conn.rollback()
+        return ReturnValue.ERROR
+    except DatabaseException.NOT_NULL_VIOLATION as e:
+        conn.rollback()
+        return ReturnValue.BAD_PARAMS
+    except DatabaseException.CHECK_VIOLATION as e:
+        conn.rollback()
+        return ReturnValue.BAD_PARAMS
+    except DatabaseException.UNIQUE_VIOLATION as e:
+        conn.rollback()
+        return ReturnValue.ALREADY_EXISTS
+    except DatabaseException.FOREIGN_KEY_VIOLATION as e:
+        conn.rollback()
+        return ReturnValue.NOT_EXISTS
+    finally:
+        conn.close()
+        return ReturnValue.OK
 
 
 def removePhotoFromDisk(photo: Photo, diskID: int) -> ReturnValue:
-    return ReturnValue.OK
-
+    conn = None
+    try:
+        conn = Connector.DBConnector()
+        query = sql.SQL(
+            "DELETE FROM Photos_In_Disk WHERE photo_id = {photo_id} AND disk_id {disk_id});"
+            "UPDATE Disk SET free_space = free_space + {photo_size} WHERE id = {disk_id}") \
+            .format(photo_id=sql.Literal(photo.getPhotoID()), disk_id=sql.Literal(diskID))
+        rows_effected, _ = conn.execute(query)
+        conn.commit()
+    except DatabaseException.ConnectionInvalid as e:
+        conn.rollback()
+        return ReturnValue.ERROR
+    except DatabaseException.NOT_NULL_VIOLATION as e:
+        conn.rollback()
+        return ReturnValue.ERROR
+    except DatabaseException.UNIQUE_VIOLATION as e:
+        return ReturnValue.OK
+    except DatabaseException.FOREIGN_KEY_VIOLATION as e:
+        return ReturnValue.OK
+    finally:
+        conn.close()
+        return ReturnValue.OK
 
 def addRAMToDisk(ramID: int, diskID: int) -> ReturnValue:
-    return ReturnValue.OK
-
-
+    conn = None
+    try:
+        conn = Connector.DBConnector()
+        query = sql.SQL(
+            "INSERT INTO Ram_In_Disk VALUES ({ram_id}, {disk_id});" \
+            .format(ram_id=sql.Literal(ramID), disk_id=sql.Literal(diskID))
+        rows_effected, _ = conn.execute(query)
+        conn.commit()
+    except DatabaseException.ConnectionInvalid as e:
+        return ReturnValue.ERROR
+    except DatabaseException.UNIQUE_VIOLATION as e:
+        return ReturnValue.ALREADY_EXISTS
+    except DatabaseException.FOREIGN_KEY_VIOLATION as e:
+        return ReturnValue.NOT_EXISTS
+    finally:
+        conn.close()
+        return ReturnValue.OK
 def removeRAMFromDisk(ramID: int, diskID: int) -> ReturnValue:
-    return ReturnValue.OK
-
+    conn = None
+    try:
+        conn = Connector.DBConnector()
+        query = sql.SQL(
+            "DELETE FROM Ram_In_Disk WHERE ram_id = {ram_id} AND disk_id {disk_id});" \
+            .format(ram_id=sql.Literal(ramID), disk_id=sql.Literal(diskID))
+        rows_effected, _ = conn.execute(query)
+        conn.commit()
+        if rows_effected == 0:
+            return ReturnValue.NOT_EXISTS
+    except DatabaseException.ConnectionInvalid as e:
+        return ReturnValue.ERROR
+    except DatabaseException.FOREIGN_KEY_VIOLATION as e:
+        return ReturnValue.OK
+    finally:
+        conn.close()
+        return ReturnValue.OK
 
 def averagePhotosSizeOnDisk(diskID: int) -> float:
     return 0
