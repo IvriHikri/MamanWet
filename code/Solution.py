@@ -32,13 +32,13 @@ def createTables():
                      "disk_id INTEGER CHECK ( disk_id > 0 ),"
                      "FOREIGN KEY (photo_id) REFERENCES Photos(id) ON DELETE CASCADE ,"
                      "FOREIGN KEY (disk_id) REFERENCES  Disk(id) ON DELETE CASCADE ,"
-                     "PRIMARY KEY (photo_id, disk_id));"
+                     "UNIQUE (photo_id, disk_id));"
                      "CREATE TABLE Ram_In_Disk("
                      "ram_id INTEGER CHECK ( ram_id > 0 ),"
                      "disk_id INTEGER CHECK ( disk_id > 0 ),"
                      "FOREIGN KEY (ram_id) REFERENCES RAM (id) ON DELETE CASCADE ,"
                      "FOREIGN KEY (disk_id) REFERENCES Disk (id) ON DELETE CASCADE ,"
-                     "PRIMARY KEY (ram_id, disk_id));")
+                     "UNIQUE (ram_id, disk_id));")
         conn.commit()
     except DatabaseException.ConnectionInvalid as e:
         print(e)
@@ -482,12 +482,42 @@ def removeRAMFromDisk(ramID: int, diskID: int) -> ReturnValue:
         return ReturnValue.OK
 
 def averagePhotosSizeOnDisk(diskID: int) -> float:
-    return 0
-
+    conn = None
+    try:
+        conn = Connector.DBConnector()
+        query = sql.SQL(
+            "SELECT AVG(size) as average FROM Photo INNER JOIN (SELECT photo_id from Photos_In_Disk WHERE disk_id = {disk_id}) AS Rel_Photos ON id = photo_id;" \
+                .format(disk_id=sql.Literal(diskID))
+        rows_effected, result = conn.execute(query)
+        conn.commit()
+    except DatabaseException.FOREIGN_KEY_VIOLATION as e:
+        return 0
+    except Exception as e:
+        return -1
+    finally:
+        average = list(result._getitem_(0).values())[0]
+        conn.close()
+        if average is None:
+            return 0
+        return average
 
 def getTotalRamOnDisk(diskID: int) -> int:
-    return 0
-
+    conn = None
+    try:
+        conn = Connector.DBConnector()
+        query = sql.SQL(
+            "SELECT SUM(size) as sum_total_ram FROM RAM INNER JOIN (SELECT ram_id from Ram_In_Disk WHERE disk_id = {disk_id}) AS Rel_Rams ON id = ram_id_id;" \
+                .format(disk_id=sql.Literal(diskID))
+        rows_effected, result = conn.execute(query)
+        conn.commit()
+    except DatabaseException.FOREIGN_KEY_VIOLATION as e:
+        return 0
+    except Exception as e:
+        return -1
+    finally:
+        sum = list(result._getitem_(0).values())[0]
+        conn.close()
+        return sum
 
 def getCostForDescription(description: str) -> int:
     return 0
