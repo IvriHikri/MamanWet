@@ -61,11 +61,13 @@ def clearTables():
     conn = None
     try:
         conn = Connector.DBConnector()
-        conn.execute("DELETE FROM Photos;"
+        conn.execute("BEGIN;"
+                     "DELETE FROM Photos;"
                      "DELETE FROM Disk;"
                      "DELETE FROM RAM;"
                      "DELETE FROM Photos_In_Disk;"
-                     "DELETE FROM Rams_In_Disk;"
+                     "DELETE FROM Ram_In_Disk;"
+                     "COMMIT;"
                      )
         conn.commit()
     except DatabaseException.ConnectionInvalid as e:
@@ -93,7 +95,13 @@ def dropTables():
     conn = None
     try:
         conn = Connector.DBConnector()
-        conn.execute("DROP TABLE IF EXISTS Users CASCADE")#change!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+        conn.execute("BEGIN;"
+                     "DROP TABLE IF EXISTS Photos CASCADE;"
+                     "DROP TABLE IF EXISTS Disk CASCADE;"
+                     "DROP TABLE IF EXISTS RAM CASCADE;"
+                     "DROP TABLE IF EXISTS Photos_In_Disk CASCADE;"
+                     "DROP TABLE IF EXISTS Ram_In_Disk CASCADE;"
+                     "COMMIT")
         conn.commit()
     except DatabaseException.ConnectionInvalid as e:
         # do stuff
@@ -113,7 +121,6 @@ def dropTables():
     except Exception as e:
         print(e)
     finally:
-        # will happen any way after code try termination or exception handling
         conn.close()
 
 
@@ -124,10 +131,11 @@ def addPhoto(photo: Photo) -> ReturnValue:
     photo_size = photo.getSize()
     try:
         conn = Connector.DBConnector()
-        query = sql.SQL("INSERT INTO Photos(id, description,size) VALUES({id}, {description}, {size});".format(id=photo_id,
-                                                                                       description=photo_description, size=photo_size))
+        query = sql.SQL("INSERT INTO Photos(id, description,size) VALUES({id}, {description}, {size});").format(id=sql.Literal(photo_id),
+                                                                                       description=sql.Literal(photo_description), size=sql.Literal(photo_size))
         rows_effected, _ = conn.execute(query)
         conn.commit()
+        return ReturnValue.OK
     except DatabaseException.ConnectionInvalid as e:
         return ReturnValue.ERROR
     except DatabaseException.NOT_NULL_VIOLATION as e:
@@ -142,8 +150,6 @@ def addPhoto(photo: Photo) -> ReturnValue:
         return ReturnValue.ERROR
     finally:
         conn.close()
-        return ReturnValue.OK
-
 
 
 def getPhotoByID(photoID: int) -> Photo:
@@ -166,7 +172,7 @@ def getPhotoByID(photoID: int) -> Photo:
         return Photo.badPhoto()
     finally:
         conn.close()
-        values = list(result._getitem_(0).values())
+        values = list(result.__getitem__(0).values())
         photo = Photo(*values)
         return photo
 
@@ -177,7 +183,7 @@ def deletePhoto(photo: Photo) -> ReturnValue:
     rows_effected = 0
     try:
         conn = Connector.DBConnector()
-        query = sql.SQL("DELETE FROM Photos WHERE id={0}".format(id=photo.getPhotoID()))
+        query = sql.SQL("DELETE FROM Photos WHERE id={0}").format(id=photo.getPhotoID())
         rows_effected, _ = conn.execute(query)
         conn.commit()
     except DatabaseException.ConnectionInvalid as e:
@@ -208,16 +214,14 @@ def addDisk(disk: Disk) -> ReturnValue:
         disk_free_space = disk.getFreeSpace()
         disk_cost_per_byte = disk.getCost()
         query = sql.SQL(
-            "INSERT INTO Disk(id,"
-            " manufacturing_company,"
-            " speed,"
-            " free_space,"
-            " cost_per_byte) VALUES ({id}, {manufacturing_company}, {speed}, {free_space}, {cost_per_byte});".format(
-            id=disk_id, manufacturing_company=disk_manufacture_company,
-            speed=disk_speed, free_space=disk_free_space,
-            cost_per_byte=disk_cost_per_byte))
+            "INSERT INTO Disk(id, manufacturing_company, speed, free_space, cost_per_byte)"
+            "VALUES ({id}, {manufacturing_company}, {speed}, {free_space}, {cost_per_byte});").format(
+            id=sql.Literal(disk_id), manufacturing_company=sql.Literal(disk_manufacture_company),
+            speed=sql.Literal(disk_speed), free_space=sql.Literal(disk_free_space),
+            cost_per_byte=sql.Literal(disk_cost_per_byte))
         rows_effected, _ = conn.execute(query)
         conn.commit()
+        return ReturnValue.OK
     except DatabaseException.ConnectionInvalid as e:
         return ReturnValue.ERROR
     except DatabaseException.NOT_NULL_VIOLATION as e:
@@ -232,8 +236,6 @@ def addDisk(disk: Disk) -> ReturnValue:
         return ReturnValue.ERROR
     finally:
         conn.close()
-        return ReturnValue.OK
-
 
 def getDiskByID(diskID: int) -> Disk:
     conn = None
@@ -241,10 +243,10 @@ def getDiskByID(diskID: int) -> Disk:
     result = Connector.ResultSet()
     try:
         conn = Connector.DBConnector()
-        query = sql.SQL("SELECT * FROM Disk WHERE id={0};".format(diskID=diskID))
+        query = sql.SQL("SELECT * FROM Disk WHERE id={diskID};".format(diskID=diskID))
         rows_effected, result = conn.execute(query)
         conn.commit()
-        values = list(result._getitem_(0).values())
+        values = list(result.__getitem__(0).values())
         disk = Disk(*values)
         return disk
         # rows_effected is the number of rows received by the SELECT
@@ -270,10 +272,11 @@ def deleteDisk(diskID: int) -> ReturnValue:
     rows_effected = 0
     try:
         conn = Connector.DBConnector()
-        query = sql.SQL("DELETE FROM Disk WHERE id={id}".format(diskID))
-
-
+        query = sql.SQL("DELETE FROM Disk WHERE id={id}").format(diskID)
         rows_effected, _ = conn.execute(query)
+        if rows_effected == 0:
+            return ReturnValue.ALREADY_EXISTS
+        return ReturnValue.OK
     except DatabaseException.ConnectionInvalid as e:
         return ReturnValue.ERROR
     # except DatabaseException.NOT_NULL_VIOLATION as e:
@@ -288,9 +291,6 @@ def deleteDisk(diskID: int) -> ReturnValue:
         return ReturnValue.ERROR
     finally:
         conn.close()
-        if rows_effected == 0:
-            return ReturnValue.ALREADY_EXISTS
-        return ReturnValue.OK
 
 def addRAM(ram: RAM) -> ReturnValue:
     conn = None
@@ -299,12 +299,13 @@ def addRAM(ram: RAM) -> ReturnValue:
     ram_size = ram.getSize()
     try:
         conn = Connector.DBConnector()
-        query = sql.SQL("INSERT INTO RAM(id, size, company) VALUES({ram_id},{ram_size},{ram_company})".format(
-            id=ram_id,
-            size=ram_size,
-            company=ram_company))
+        query = sql.SQL("INSERT INTO RAM(id, size, company) VALUES({ram_id},{ram_size},{ram_company})").format(
+            ram_id=sql.Literal(ram_id),
+            ram_size=sql.Literal(ram_size),
+            ram_company=sql.Literal(ram_company))
         rows_effected, _ = conn.execute(query)
         conn.commit()
+        return ReturnValue.OK
     except DatabaseException.ConnectionInvalid as e:
         return ReturnValue.ERROR
     except DatabaseException.NOT_NULL_VIOLATION as e:
@@ -319,9 +320,6 @@ def addRAM(ram: RAM) -> ReturnValue:
         return ReturnValue.ERROR
     finally:
         conn.close()
-        return ReturnValue.OK
-
-
 
 def getRAMByID(ramID: int) -> RAM:
     conn = None
@@ -330,6 +328,9 @@ def getRAMByID(ramID: int) -> RAM:
         conn = Connector.DBConnector()
         rows_effected, result = conn.execute(f"SELECT * FROM RAM WHERE id={ramID}")
         conn.commit()
+        values = list(result.__getitem__(0).values())
+        ram = RAM(*values)
+        return ram
         # rows_effected is the number of rows received by the SELECT
     except DatabaseException.ConnectionInvalid as e:
         return RAM.badRAM()
@@ -343,19 +344,16 @@ def getRAMByID(ramID: int) -> RAM:
         return RAM.badRAM()
     finally:
         conn.close()
-        values = list(result._getitem_(0).values())
-        ram = RAM(*values)
-        return ram
-
 
 def deleteRAM(ramID: int) -> ReturnValue:
     conn = None
     rows_effected = 0
     try:
         conn = Connector.DBConnector()
-        query = sql.SQL("DELETE FROM RAM WHERE id={ramID}".format(ramID=ramID))
+        query = sql.SQL("DELETE FROM RAM WHERE id={ramID}").format(ramID=ramID)
         rows_effected, _ = conn.execute(query)
         conn.commit()
+        return ReturnValue.OK
     except DatabaseException.ConnectionInvalid as e:
         return ReturnValue.ERROR
     except DatabaseException.NOT_NULL_VIOLATION as e:
@@ -371,8 +369,6 @@ def deleteRAM(ramID: int) -> ReturnValue:
     finally:
         conn.close()
         # return rows_effected
-    return ReturnValue.OK
-
 
 def addDiskAndPhoto(disk: Disk, photo: Photo) -> ReturnValue:
     conn = None
@@ -390,13 +386,13 @@ def addDiskAndPhoto(disk: Disk, photo: Photo) -> ReturnValue:
         conn = Connector.DBConnector()
         query = sql.SQL(
             "INSERT INTO Disk(id, manufacturing_company, speed, free_space, cost_per_byte) VALUES ({id}, {manufacturing_company}, {speed}, {free_space}, {cost_per_byte});"
-            "INSERT INTO Photos(id, description, size) VALUES ({photo_id}, {description}, {size}); "
-            .format(id=disk_id, manufacturing_company=disk_manufacture_company,
-                    speed=disk_speed, free_space=disk_free_space,
-                    cost_per_byte=disk_cost_per_byte, photo_size=photo_id,
-                    description=photo_description, size=photo_size))
+            "INSERT INTO Photos(id, description, size) VALUES ({photo_id}, {description}, {size});").format(id=sql.Literal(disk_id), manufacturing_company=sql.Literal(disk_manufacture_company),
+                    speed=sql.Literal(disk_speed), free_space=sql.Literal(disk_free_space),
+                    cost_per_byte=sql.Literal(disk_cost_per_byte), photo_size=sql.Literal(photo_id),
+                    description=sql.Literal(photo_description), size=sql.Literal(photo_size))
         rows_effected, _ = conn.execute(query)
         conn.commit()
+        return ReturnValue.OK
     except DatabaseException.ConnectionInvalid as e:
         conn.rollback()
         return ReturnValue.ERROR
@@ -416,9 +412,6 @@ def addDiskAndPhoto(disk: Disk, photo: Photo) -> ReturnValue:
         return ReturnValue.ERROR
     finally:
         conn.close()
-        return ReturnValue.OK
-
-
 
 def addPhotoToDisk(photo: Photo, diskID: int) -> ReturnValue:
     conn = None
@@ -426,11 +419,12 @@ def addPhotoToDisk(photo: Photo, diskID: int) -> ReturnValue:
         conn = Connector.DBConnector()
         query = sql.SQL(
             "INSERT INTO Photos_In_Disk VALUES ({photo_id}, {disk_id});"
-            "UPDATE Disk SET free_space = free_space - {photo_size} WHERE id = {disk_id};" \
+            "UPDATE Disk SET free_space = free_space - {photo_size} WHERE id = {disk_id};"\
             .format(photo_id=photo.getPhotoID(), disk_id=diskID,
                     photo_size=photo.getSize()))
         rows_effected, _ = conn.execute(query)
         conn.commit()
+        return ReturnValue.OK
     except DatabaseException.ConnectionInvalid as e:
         conn.rollback()
         return ReturnValue.ERROR
@@ -448,8 +442,6 @@ def addPhotoToDisk(photo: Photo, diskID: int) -> ReturnValue:
         return ReturnValue.NOT_EXISTS
     finally:
         conn.close()
-        return ReturnValue.OK
-
 
 def removePhotoFromDisk(photo: Photo, diskID: int) -> ReturnValue:
     conn = None
@@ -457,10 +449,11 @@ def removePhotoFromDisk(photo: Photo, diskID: int) -> ReturnValue:
         conn = Connector.DBConnector()
         query = sql.SQL(
             "DELETE FROM Photos_In_Disk WHERE photo_id = {photo_id} AND disk_id {disk_id});"
-            "UPDATE Disk SET free_space = free_space + {photo_size} WHERE id = {disk_id};" \
-            .format(photo_id=photo.getPhotoID(), disk_id=diskID))
+            "UPDATE Disk SET free_space = free_space + {photo_size} WHERE id = {disk_id};") \
+            .format(photo_id=photo.getPhotoID(), disk_id=diskID)
         rows_effected, _ = conn.execute(query)
         conn.commit()
+        return ReturnValue.OK
     except DatabaseException.ConnectionInvalid as e:
         conn.rollback()
         return ReturnValue.ERROR
@@ -473,17 +466,17 @@ def removePhotoFromDisk(photo: Photo, diskID: int) -> ReturnValue:
         return ReturnValue.OK
     finally:
         conn.close()
-        return ReturnValue.OK
 
 def addRAMToDisk(ramID: int, diskID: int) -> ReturnValue:
     conn = None
     try:
         conn = Connector.DBConnector()
         query = sql.SQL(
-            "INSERT INTO Ram_In_Disk VALUES ({ram_id}, {disk_id});" \
-            .format(ram_id=ramID, disk_id=diskID))
+            "INSERT INTO Ram_In_Disk VALUES ({ram_id}, {disk_id});") \
+            .format(ram_id=sql.Literal(ramID), disk_id=sql.Literal(diskID))
         rows_effected, _ = conn.execute(query)
         conn.commit()
+        return ReturnValue.OK
     except DatabaseException.ConnectionInvalid as e:
         return ReturnValue.ERROR
     except DatabaseException.UNIQUE_VIOLATION as e:
@@ -492,36 +485,34 @@ def addRAMToDisk(ramID: int, diskID: int) -> ReturnValue:
         return ReturnValue.NOT_EXISTS
     finally:
         conn.close()
-        return ReturnValue.OK
+
 def removeRAMFromDisk(ramID: int, diskID: int) -> ReturnValue:
     conn = None
     try:
         conn = Connector.DBConnector()
         query = sql.SQL(
-            "DELETE FROM Ram_In_Disk WHERE ram_id = {ram_id} AND disk_id {disk_id});" \
-            .format(ram_id=ramID, disk_id=diskID))
+            "DELETE FROM Ram_In_Disk WHERE ram_id = {ram_id} AND disk_id {disk_id});").format(ram_id=ramID, disk_id=diskID)
         rows_effected, _ = conn.execute(query)
         conn.commit()
         if rows_effected == 0:
             return ReturnValue.NOT_EXISTS
+        return ReturnValue.OK
     except DatabaseException.ConnectionInvalid as e:
         return ReturnValue.ERROR
     except DatabaseException.FOREIGN_KEY_VIOLATION as e:
         return ReturnValue.OK
     finally:
         conn.close()
-        return ReturnValue.OK
 
 def averagePhotosSizeOnDisk(diskID: int) -> float:
     conn = None
     try:
         conn = Connector.DBConnector()
         query = sql.SQL(
-            "SELECT AVG(size) as average FROM Photos INNER JOIN (SELECT photo_id from Photos_In_Disk WHERE disk_id = {disk_id}) AS Rel_Photos ON id = photo_id;" \
-                .format(disk_id=diskID))
+            "SELECT AVG(size) AS average FROM Photos INNER JOIN (SELECT photo_id FROM Photos_In_Disk WHERE disk_id = {disk_id}) AS Rel_Photos ON id = photo_id;".format(disk_id=diskID))
         rows_effected, result = conn.execute(query)
         conn.commit()
-        average = list(result._getitem_(0).values())[0]
+        average = list(result.__getitem__(0).values())[0]
         if average is None:
             return 0
         return average
@@ -536,18 +527,17 @@ def getTotalRamOnDisk(diskID: int) -> int:
     try:
         conn = Connector.DBConnector()
         query = sql.SQL(
-            "SELECT SUM(size) as sum_total_ram FROM RAM INNER JOIN (SELECT ram_id from Ram_In_Disk WHERE disk_id = {disk_id}) AS Rel_Rams ON id = ram_id;" \
-                .format(disk_id=diskID))
+            "SELECT SUM(size) as sum_total_ram FROM RAM INNER JOIN (SELECT ram_id from Ram_In_Disk WHERE disk_id = {disk_id}) AS Rel_Rams ON id = ram_id;").format(disk_id=diskID)
         rows_effected, result = conn.execute(query)
         conn.commit()
+        sum = list(result.__getitem__(0).values())[0]
+        return sum
     except DatabaseException.FOREIGN_KEY_VIOLATION as e:
         return 0
     except Exception as e:
         return -1
     finally:
-        sum = list(result._getitem_(0).values())[0]
         conn.close()
-        return sum
 
 def getCostForDescription(description: str) -> int:
     conn = None
@@ -557,19 +547,17 @@ def getCostForDescription(description: str) -> int:
             "SELECT SUM(size * cost_per_byte) AS total_cost"
             "FROM ((SELECT id, size FROM Photos WHERE description = {description}) AS P"
             "INNER JOIN Photos_On_Disk ON id = photo_id)"
-            "INNER JOIN Disk ON id = disk_id);" \
-                .format(description=description))
+            "INNER JOIN Disk ON id = disk_id);").format(description=description)
         rows_effected, result = conn.execute(query)
         conn.commit()
-    except Exception as e:
-        return -1
-    finally:
-        total_cost = list(result._getitem_(0).values())[0]
-        conn.close()
+        total_cost = list(result.__getitem__(0).values())[0]
         if total_cost is None:
             return 0
         return total_cost
-
+    except Exception as e:
+        return -1
+    finally:
+        conn.close()
 def getPhotosCanBeAddedToDisk(diskID: int) -> List[int]:
     conn = None
     list_to_return = []
@@ -580,18 +568,16 @@ def getPhotosCanBeAddedToDisk(diskID: int) -> List[int]:
             "FROM Photos AS P, Disk AS D" 
             "WHERE D.id = {diskID} AND (D.free_space - P.size >= 0)" 
             "ORDER BY P.id ASC"
-            "LIMIT 5;"
-            .format(diskID=diskID))
+            "LIMIT 5;").format(diskID=diskID)
         rows_effected, result = conn.execute(query)
         conn.commit()
         for i in range(rows_effected):
             list_to_return += result.__getitem__(i).values()
+        return list_to_return
     except Exception as e:
         return []
     finally:
         conn.close()
-        return list_to_return
-
 
 def getPhotosCanBeAddedToDiskAndRAM(diskID: int) -> List[int]:
     conn = None
@@ -604,8 +590,7 @@ def getPhotosCanBeAddedToDiskAndRAM(diskID: int) -> List[int]:
             "WHERE D.id = {diskID} AND (D.free_space - P.size >= 0)"
             "AND P.size <= (SELECT SUM(size) FROM RAM INNER JOIN (SELECT ram_id from Ram_In_Disk WHERE disk_id = {disk_id}) AS Rel_Rams ON id = ram_id;"
             "ORDER BY P.id ASC"
-            "LIMIT 5"
-            .format(diskID=diskID))
+            "LIMIT 5").format(diskID=diskID)
         # NEED TO SEE IF WE NEED TO ADD COALESCE
         rows_effected, result = conn.execute(query)
         conn.commit()
@@ -625,8 +610,7 @@ def isCompanyExclusive(diskID: int) -> bool:
             "SELECT COUNT(id)"
             "FROM RAM"
             "WHERE (company <> (SELECT manufacturing_company FROM Disk WHERE id = {diskID})"
-            "INNER JOIN Rams_On_Disk WHERE disk_id = {diskID} ON id = ram_id);"
-            .format(diskID=diskID))
+            "INNER JOIN Rams_On_Disk WHERE disk_id = {diskID} ON id = ram_id);").format(diskID=diskID)
         # NOT SURE ABOUT IT. NEED TO CHECK
         rows_effected, result = conn.execute(query)
         conn.commit()
@@ -647,8 +631,7 @@ def isDiskContainingAtLeastNumExists(description : str, num : int) -> bool:
             "FROM Photos WHERE (description = {description}) INNER JOIN (SELECT * from Photos_In_Disk)"
             "ON id = photo_id"
             "GROUP BY disk_id"
-            "HAVING COUNT(*) < {num}"
-        .format(description=description, num=num))
+            "HAVING COUNT(*) < {num}").format(description=description, num=num)
         rows_effected, result = conn.execute(query)
         conn.commit()
         sum =list(result.__getitem__(0).values())[0]
@@ -675,9 +658,11 @@ def getClosePhotos(photoID: int) -> List[int]:
 
 if __name__ == '__main__':
     clearTables()
+    dropTables()
     createTables()
     print("0", averagePhotosSizeOnDisk(1))
     addDisk(Disk(1, "DELL", 10, 15, 10))
+    addDisk(Disk(1,"NOA", 10, 10, 10))
     disk = getDiskByID(1)
     print("15", disk.getFreeSpace())
     print("0", averagePhotosSizeOnDisk(1))
