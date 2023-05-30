@@ -124,7 +124,7 @@ def addPhoto(photo: Photo) -> ReturnValue:
     photo_size = photo.getSize()
     try:
         conn = Connector.DBConnector()
-        query = sql.SQL("INSERT INTO Photos(id, description,size) VALUES({id}, {description}, {size})").format(id=photo_id,
+        query = sql.SQL("INSERT INTO Photos(id, description,size) VALUES({id}, {description}, {size});".format(id=photo_id,
                                                                                        description=photo_description, size=photo_size))
         rows_effected, _ = conn.execute(query)
         conn.commit()
@@ -177,7 +177,7 @@ def deletePhoto(photo: Photo) -> ReturnValue:
     rows_effected = 0
     try:
         conn = Connector.DBConnector()
-        query = sql.SQL("DELETE FROM Photos WHERE id={0}").format(id=photo.getPhotoID()))
+        query = sql.SQL("DELETE FROM Photos WHERE id={0}".format(id=photo.getPhotoID()))
         rows_effected, _ = conn.execute(query)
         conn.commit()
     except DatabaseException.ConnectionInvalid as e:
@@ -212,7 +212,7 @@ def addDisk(disk: Disk) -> ReturnValue:
             " manufacturing_company,"
             " speed,"
             " free_space,"
-            " cost_per_byte) VALUES ({id}, {manufacturing_company}, {speed}, {free_space}, {cost_per_byte})").format(
+            " cost_per_byte) VALUES ({id}, {manufacturing_company}, {speed}, {free_space}, {cost_per_byte});".format(
             id=disk_id, manufacturing_company=disk_manufacture_company,
             speed=disk_speed, free_space=disk_free_space,
             cost_per_byte=disk_cost_per_byte))
@@ -241,7 +241,7 @@ def getDiskByID(diskID: int) -> Disk:
     result = Connector.ResultSet()
     try:
         conn = Connector.DBConnector()
-        query = sql.SQL("SELECT * FROM Disk WHERE id={0}".format(diskID=sql.Literal(diskID)))
+        query = sql.SQL("SELECT * FROM Disk WHERE id={0};".format(diskID=diskID))
         rows_effected, result = conn.execute(query)
         conn.commit()
         values = list(result._getitem_(0).values())
@@ -299,10 +299,10 @@ def addRAM(ram: RAM) -> ReturnValue:
     ram_size = ram.getSize()
     try:
         conn = Connector.DBConnector()
-        query = sql.SQL("INSERT INTO RAM(id, size, company) VALUES({ram_id},{ram_size},{ram_company})").format(
-            id=sql.Literal(ram_id),
-            size=sql.Literal(ram_size),
-            company=sql.Literal(ram_company))
+        query = sql.SQL("INSERT INTO RAM(id, size, company) VALUES({ram_id},{ram_size},{ram_company})".format(
+            id=ram_id,
+            size=ram_size,
+            company=ram_company))
         rows_effected, _ = conn.execute(query)
         conn.commit()
     except DatabaseException.ConnectionInvalid as e:
@@ -353,7 +353,7 @@ def deleteRAM(ramID: int) -> ReturnValue:
     rows_effected = 0
     try:
         conn = Connector.DBConnector()
-        query = sql.SQL("DELETE FROM RAM WHERE id={0}").format(sql.Literal(ramID))
+        query = sql.SQL("DELETE FROM RAM WHERE id={ramID}".format(ramID=ramID))
         rows_effected, _ = conn.execute(query)
         conn.commit()
     except DatabaseException.ConnectionInvalid as e:
@@ -390,11 +390,11 @@ def addDiskAndPhoto(disk: Disk, photo: Photo) -> ReturnValue:
         conn = Connector.DBConnector()
         query = sql.SQL(
             "INSERT INTO Disk(id, manufacturing_company, speed, free_space, cost_per_byte) VALUES ({id}, {manufacturing_company}, {speed}, {free_space}, {cost_per_byte});"
-            "INSERT INTO Photos(id, description, size) VALUES ({photo_id}, {description}, {size}) ") \
-            .format(id=sql.Literal(disk_id), manufacturing_company=sql.Literal(disk_manufacture_company),
-                    speed=sql.Literal(disk_speed), free_space=sql.Literal(disk_free_space),
-                    cost_per_byte=sql.Literal(disk_cost_per_byte), photo_size=sql.Literal(photo_id),
-                    description=photo_description, size=photo_size)
+            "INSERT INTO Photos(id, description, size) VALUES ({photo_id}, {description}, {size}); "
+            .format(id=disk_id, manufacturing_company=disk_manufacture_company,
+                    speed=disk_speed, free_space=disk_free_space,
+                    cost_per_byte=disk_cost_per_byte, photo_size=photo_id,
+                    description=photo_description, size=photo_size))
         rows_effected, _ = conn.execute(query)
         conn.commit()
     except DatabaseException.ConnectionInvalid as e:
@@ -426,9 +426,9 @@ def addPhotoToDisk(photo: Photo, diskID: int) -> ReturnValue:
         conn = Connector.DBConnector()
         query = sql.SQL(
             "INSERT INTO Photos_In_Disk VALUES ({photo_id}, {disk_id});"
-            "UPDATE Disk SET free_space = free_space - {photo_size} WHERE id = {disk_id}") \
-            .format(photo_id=sql.Literal(photo.getPhotoID()), disk_id=sql.Literal(diskID),
-                    photo_size=sql.Literal(photo.getSize()))
+            "UPDATE Disk SET free_space = free_space - {photo_size} WHERE id = {disk_id};" \
+            .format(photo_id=photo.getPhotoID(), disk_id=diskID,
+                    photo_size=photo.getSize()))
         rows_effected, _ = conn.execute(query)
         conn.commit()
     except DatabaseException.ConnectionInvalid as e:
@@ -457,8 +457,8 @@ def removePhotoFromDisk(photo: Photo, diskID: int) -> ReturnValue:
         conn = Connector.DBConnector()
         query = sql.SQL(
             "DELETE FROM Photos_In_Disk WHERE photo_id = {photo_id} AND disk_id {disk_id});"
-            "UPDATE Disk SET free_space = free_space + {photo_size} WHERE id = {disk_id}") \
-            .format(photo_id=sql.Literal(photo.getPhotoID()), disk_id=sql.Literal(diskID))
+            "UPDATE Disk SET free_space = free_space + {photo_size} WHERE id = {disk_id};" \
+            .format(photo_id=photo.getPhotoID(), disk_id=diskID))
         rows_effected, _ = conn.execute(query)
         conn.commit()
     except DatabaseException.ConnectionInvalid as e:
@@ -481,7 +481,7 @@ def addRAMToDisk(ramID: int, diskID: int) -> ReturnValue:
         conn = Connector.DBConnector()
         query = sql.SQL(
             "INSERT INTO Ram_In_Disk VALUES ({ram_id}, {disk_id});" \
-            .format(ram_id=sql.Literal(ramID), disk_id=sql.Literal(diskID)))
+            .format(ram_id=ramID, disk_id=diskID))
         rows_effected, _ = conn.execute(query)
         conn.commit()
     except DatabaseException.ConnectionInvalid as e:
@@ -499,7 +499,7 @@ def removeRAMFromDisk(ramID: int, diskID: int) -> ReturnValue:
         conn = Connector.DBConnector()
         query = sql.SQL(
             "DELETE FROM Ram_In_Disk WHERE ram_id = {ram_id} AND disk_id {disk_id});" \
-            .format(ram_id=sql.Literal(ramID), disk_id=sql.Literal(diskID)))
+            .format(ram_id=ramID, disk_id=diskID))
         rows_effected, _ = conn.execute(query)
         conn.commit()
         if rows_effected == 0:
