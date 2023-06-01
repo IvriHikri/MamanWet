@@ -531,10 +531,12 @@ def getTotalRamOnDisk(diskID: int) -> int:
     try:
         conn = Connector.DBConnector()
         query = sql.SQL(
-            "SELECT SUM(size) as sum_total_ram FROM RAM INNER JOIN (SELECT ram_id from Ram_In_Disk WHERE disk_id = {disk_id}) AS Rel_Rams ON id = ram_id;").format(disk_id=diskID)
+            "SELECT SUM(size) as sum_total_ram FROM RAM INNER JOIN (SELECT ram_id from Ram_In_Disk WHERE disk_id = {disk_id}) AS Rel_Rams ON RAM.id = Rel_Rams.ram_id;".format(disk_id=diskID))
         rows_effected, result = conn.execute(query)
         conn.commit()
         sum = list(result.__getitem__(0).values())[0]
+        if sum is None:
+            return 0
         return sum
     except DatabaseException.FOREIGN_KEY_VIOLATION as e:
         return 0
@@ -550,8 +552,8 @@ def getCostForDescription(description: str) -> int:
         query = sql.SQL(
             "SELECT SUM(size * cost_per_byte) AS total_cost "
             "FROM ((SELECT id, size FROM Photos WHERE description = '{description}') AS P "
-            "INNER JOIN Photos_In_Disk ON id = photo_id) "
-            "INNER JOIN Disk ON id = disk_id;".format(description=description))
+            "INNER JOIN Photos_In_Disk AS PID ON P.id = PID.photo_id) AS DP "
+            "INNER JOIN Disk AS D ON D.id = DP.disk_id;".format(description=description))
         rows_effected, result = conn.execute(query)
         conn.commit()
         total_cost = list(result.__getitem__(0).values())[0]
@@ -568,11 +570,11 @@ def getPhotosCanBeAddedToDisk(diskID: int) -> List[int]:
     try:
         conn = Connector.DBConnector()
         query = sql.SQL(
-            "SELECT P.id"
-            "FROM Photos AS P, Disk AS D" 
-            "WHERE D.id = {diskID} AND (D.free_space - P.size >= 0)" 
-            "ORDER BY P.id ASC"
-            "LIMIT 5;").format(diskID=diskID)
+            "SELECT P.id "
+            "FROM Photos AS P, Disk AS D " 
+            "WHERE D.id = {diskID} AND (D.free_space - P.size >= 0) " 
+            "ORDER BY P.id DESC "
+            "LIMIT 5;".format(diskID=diskID))
         rows_effected, result = conn.execute(query)
         conn.commit()
         for i in range(rows_effected):
@@ -589,12 +591,12 @@ def getPhotosCanBeAddedToDiskAndRAM(diskID: int) -> List[int]:
     try:
         conn = Connector.DBConnector()
         query = sql.SQL(
-            "SELECT P.id"
-            "FROM Photos AS P, Disk AS D"
-            "WHERE D.id = {diskID} AND (D.free_space - P.size >= 0)"
-            "AND P.size <= (SELECT SUM(size) FROM RAM INNER JOIN (SELECT ram_id from Ram_In_Disk WHERE disk_id = {disk_id}) AS Rel_Rams ON id = ram_id;"
-            "ORDER BY P.id ASC"
-            "LIMIT 5").format(diskID=diskID)
+            "SELECT P.id "
+            "FROM Photos AS P, Disk AS D "
+            "WHERE (D.id = {diskID} AND (D.free_space - P.size >= 0) "
+            "AND P.size <= (SELECT COALESCE(SUM(size),0) FROM RAM INNER JOIN (SELECT ram_id FROM Ram_In_Disk WHERE disk_id = {diskID}) AS Rel_Rams ON RAM.id = Rel_Rams.ram_id)) "
+            "ORDER BY P.id ASC "
+            "LIMIT 5;".format(diskID=diskID))
         # NEED TO SEE IF WE NEED TO ADD COALESCE
         rows_effected, result = conn.execute(query)
         conn.commit()
@@ -611,17 +613,23 @@ def isCompanyExclusive(diskID: int) -> bool:
     try:
         conn = Connector.DBConnector()
         query = sql.SQL(
-            "SELECT COUNT(id)"
-            "FROM RAM"
-            "WHERE (company <> (SELECT manufacturing_company FROM Disk WHERE id = {diskID})"
-            "INNER JOIN Rams_On_Disk WHERE disk_id = {diskID} ON id = ram_id);").format(diskID=diskID)
+            "SELECT COUNT(id) "
+            "FROM RAM "
+            "WHERE (company != ALL ((SELECT manufacturing_company FROM"
+            " ((SELECT * FROM Disk WHERE id = {diskID}) AS D1 "
+            "INNER JOIN (SELECT * FROM Ram_In_Disk WHERE disk_id = {diskID}) AS ROD "
+            "ON D1.id = ROD.disk_id))));".format(diskID=diskID))
         # NOT SURE ABOUT IT. NEED TO CHECK
         rows_effected, result = conn.execute(query)
         conn.commit()
         ids_sum =list(result.__getitem__(0).values())[0]
+        if ids_sum is None:
+            return False
         if ids_sum == 0:
-            return true
-        return false
+            return True
+        return False
+    except Exception as e:
+        return False
     finally:
         conn.close()
 
@@ -640,8 +648,10 @@ def isDiskContainingAtLeastNumExists(description : str, num : int) -> bool:
         conn.commit()
         sum =list(result.__getitem__(0).values())[0]
         if sum > 0:
-            return true
-        return false
+            return True
+        return False
+    except Exception as e:
+        return False
     finally:
         conn.close()
 
@@ -716,15 +726,18 @@ def getClosePhotos(photoID: int) -> List[int]:
     list_to_return = []
     try:
         conn = Connector.DBConnector()
-        query = sql.SQL("SELECT ALl_Photos_And_Sum_of_Disks.photo_id"
-                        "FROM ("
-                        "SELECT photo_id, COUNT(disk_id) AS Count_disks FROM Photos_In_Disk WHERE disk_id IN"
-                        "(SELECT disk_id FROM Photos_In_Disk WHERE photo_id = {photo_id} AS Disks_In_Photo) AND photo_id <> {photo_id}"
+        query = sql.SQL("SELECT All_Photos_And_Sum_of_Disks.photo_id "
+                        "FROM "
+                        "(SELECT photo_id, COUNT(disk_id) AS Count_disks FROM Photos_In_Disk"
+                        " WHERE( photo_id != {photo_id}"
+                        " AND disk_id IN "
+                        "(SELECT disk_id FROM Photos_In_Disk WHERE Photos_In_Disk.photo_id = {photo_id}) "
+                        "GROUP BY photo_id )"
                         "UNION "
-                        "SELECT id, 0 FROM Photos WHERE id <> {photo_id}) AS ALl_Photos_And_Sum_of_Disks "
-                        "WHERE COUNT (Disks_In_Photo) <= 2 * ALl_Photos_And_Sum_of_Disks.Count_disks "
-                        "ORDER BY ALl_Photos_And_Sum_of_Disks.photo_id ASC "
-                        "LIMIT 10").format(photo_id=photoID)
+                        "(SELECT id, 0 FROM Photos WHERE id != {photo_id})) AS All_Photos_And_Sum_of_Disks "
+                        "WHERE (SELECT COUNT(Photos_In_Disk.disk_id) FROM Photos_In_Disk WHERE photo_id = {photo_id}) <= 2 * All_Photos_And_Sum_of_Disks.Count_disks "
+                        "ORDER BY All_Photos_And_Sum_of_Disks.photo_id ASC "
+                        "LIMIT 10".format(photo_id=photoID))
         rows_effected, result = conn.execute(query)
         conn.commit()
         for i in range(rows_effected):
