@@ -40,14 +40,14 @@ def createTables():
                      "FOREIGN KEY (disk_id) REFERENCES Disk (id) ON DELETE CASCADE ,"
                      "UNIQUE (ram_id, disk_id));"
                      "CREATE VIEW Disk_And_Sum_Photos_On_Them AS "
-                     "SELECT Sum_Photos_Fit_On_Disk.disk_id AS disk_id, Sum_Photos_Fit_On_Disk.speed AS speed, SUM(Sum_Photos_Fit_On_Disk.photo_id) AS sum_photos "
+                     "SELECT Sum_Photos_Fit_On_Disk.id AS disk_id, COALESCE(Sum_Photos_Fit_On_Disk.speed, 0) AS speed, COALESCE(SUM(Sum_Photos_Fit_On_Disk.photo_id), 0) AS sum_photos "
                      "FROM ("
                      "(SELECT id, speed FROM Disk) AS D "
-                     "FULL JOIN (SELECT D1.id as disk_id, P1.id as photo_id "
-                     "FROM Disk D1, Photos P1 "
-                     "WHERE D1.free_space - P1.size >= 0) AS Photo_Fit_On_Disk ON D.id = Photo_Fit_On_Disk.disk_id) "
+                     "FULL OUTER JOIN (SELECT D1.id AS disk_id, P1.id AS photo_id "
+                     "FROM Disk AS D1, Photos AS P1 "
+                     "WHERE D1.free_space - P1.size >= 0) AS Photo_Fit_On_Disk ON Photo_Fit_On_Disk.disk_id = D.id) "
                      "AS Sum_Photos_Fit_On_Disk "
-                     "GROUP BY Sum_Photos_Fit_On_Disk.disk_id, Sum_Photos_Fit_On_Disk.speed;")
+                     "GROUP BY Sum_Photos_Fit_On_Disk.id, Sum_Photos_Fit_On_Disk.disk_id, Sum_Photos_Fit_On_Disk.speed;")
         conn.commit()
     except DatabaseException.ConnectionInvalid as e:
         print(e)
@@ -612,20 +612,16 @@ def isCompanyExclusive(diskID: int) -> bool:
     conn = None
     try:
         conn = Connector.DBConnector()
-        query = sql.SQL(
-            "SELECT COUNT(id) "
-            "FROM RAM "
-            "WHERE (company != ALL ((SELECT manufacturing_company FROM"
-            " ((SELECT * FROM Disk WHERE id = {diskID}) AS D1 "
-            "INNER JOIN (SELECT * FROM Ram_In_Disk WHERE disk_id = {diskID}) AS ROD "
-            "ON D1.id = ROD.disk_id))));".format(diskID=diskID))
+        query = sql.SQL(" SELECT COUNT (company) FROM("
+                        "SELECT  manufacturing_company AS company FROM Disk WHERE id = {diskID}"
+                        "UNION ("
+                        "SELECT company FROM RAM WHERE id IN("
+                        "SELECT ram_id FROM Ram_In_Disk WHERE disk_id = {diskID}))) AS DC".format(diskID=diskID))
         # NOT SURE ABOUT IT. NEED TO CHECK
         rows_effected, result = conn.execute(query)
         conn.commit()
-        ids_sum =list(result.__getitem__(0).values())[0]
-        if ids_sum is None:
-            return False
-        if ids_sum == 0:
+        company_sum =list(result.__getitem__(0).values())[0]
+        if company_sum == 1:
             return True
         return False
     except Exception as e:
@@ -706,10 +702,10 @@ def mostAvailableDisks() -> List[int]:
         conn = Connector.DBConnector()
         query = sql.SQL("SELECT QR.disk_id "
                         "FROM ("
-                        "SELECT * Disk_And_Sum_Photos_On_Them "
+                        "SELECT * FROM Disk_And_Sum_Photos_On_Them "
                         "ORDER BY sum_photos DESC, speed DESC, disk_id ASC "
                         "LIMIT 5 )"
-                        "AS QR")
+                        "AS QR;")
         rows_effected, result = conn.execute(query)
         conn.commit()
         for i in range(rows_effected):
@@ -728,14 +724,12 @@ def getClosePhotos(photoID: int) -> List[int]:
         conn = Connector.DBConnector()
         query = sql.SQL("SELECT All_Photos_And_Sum_of_Disks.photo_id "
                         "FROM "
-                        "(SELECT photo_id, COUNT(disk_id) AS Count_disks FROM Photos_In_Disk"
-                        " WHERE( photo_id != {photo_id}"
-                        " AND disk_id IN "
-                        "(SELECT disk_id FROM Photos_In_Disk WHERE Photos_In_Disk.photo_id = {photo_id}) "
-                        "GROUP BY photo_id )"
+                        "((SELECT photo_id, COALESCE(COUNT(disk_id), 0) AS Count_disks FROM Photos_In_Disk"
+                        " WHERE( photo_id != {photo_id} AND disk_id IN (SELECT disk_id FROM Photos_In_Disk WHERE Photos_In_Disk.photo_id = {photo_id})) "
+                        "GROUP BY photo_id) "
                         "UNION "
                         "(SELECT id, 0 FROM Photos WHERE id != {photo_id})) AS All_Photos_And_Sum_of_Disks "
-                        "WHERE (SELECT COUNT(Photos_In_Disk.disk_id) FROM Photos_In_Disk WHERE photo_id = {photo_id}) <= 2 * All_Photos_And_Sum_of_Disks.Count_disks "
+                        "WHERE (SELECT COALESCE(COUNT(Photos_In_Disk.disk_id),0) FROM Photos_In_Disk WHERE Photos_In_Disk.photo_id = {photo_id}) <= 2 * All_Photos_And_Sum_of_Disks.Count_disks "
                         "ORDER BY All_Photos_And_Sum_of_Disks.photo_id ASC "
                         "LIMIT 10".format(photo_id=photoID))
         rows_effected, result = conn.execute(query)
