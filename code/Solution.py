@@ -28,17 +28,21 @@ def createTables():
                      " company TEXT NOT NULL,"
                      " size INTEGER NOT NULL CHECK(size > 0));"
                      "CREATE TABLE Photos_In_Disk("
-                     "photo_id INTEGER CHECK ( photo_id > 0 ),"
-                     "disk_id INTEGER CHECK ( disk_id > 0 ),"
+                     "photo_id INTEGER NOT NULL CHECK ( photo_id > 0 ),"
+                     "disk_id INTEGER NOT NULL CHECK ( disk_id > 0 ),"
                      "FOREIGN KEY (photo_id) REFERENCES Photos(id) ON DELETE CASCADE ,"
                      "FOREIGN KEY (disk_id) REFERENCES  Disk(id) ON DELETE CASCADE ,"
                      "UNIQUE (photo_id, disk_id));"
                      "CREATE TABLE Ram_In_Disk("
-                     "ram_id INTEGER CHECK ( ram_id > 0 ),"
-                     "disk_id INTEGER CHECK ( disk_id > 0 ),"
+                     "ram_id INTEGER NOT NULL CHECK ( ram_id > 0 ),"
+                     "disk_id INTEGER NOT NULL CHECK ( disk_id > 0 ),"
                      "FOREIGN KEY (ram_id) REFERENCES RAM (id) ON DELETE CASCADE ,"
                      "FOREIGN KEY (disk_id) REFERENCES Disk (id) ON DELETE CASCADE ,"
                      "UNIQUE (ram_id, disk_id));"
+                     "CREATE VIEW AllPhotosAndDiskIDs AS "
+                     "SELECT Photos.id AS id, Photos.description AS description, Photos.size AS size, Photos_In_Disk.disk_id AS disk_id FROM Photos INNER JOIN Photos_In_Disk ON Photos.id = Photos_In_Disk.photo_id; "
+                     "CREATE VIEW AllRamsAndDiskIDs AS "
+                     "SELECT RAM.id AS id, RAM.company AS company, RAM.size AS size, Ram_In_Disk.disk_id AS disk_id FROM RAM INNER JOIN Ram_In_Disk ON RAM.id = Ram_In_Disk.ram_id; "
                      "CREATE VIEW Disk_And_Sum_Photos_On_Them AS "
                      "SELECT Sum_Photos_Fit_On_Disk.id AS disk_id, COALESCE(Sum_Photos_Fit_On_Disk.speed, 0) AS speed, COALESCE(SUM(Sum_Photos_Fit_On_Disk.photo_id), 0) AS sum_photos "
                      "FROM ("
@@ -106,6 +110,7 @@ def dropTables():
         conn = Connector.DBConnector()
         conn.execute("BEGIN;"
                      "DROP VIEW Disk_And_Sum_Photos_On_Them;"
+                     "DROP VIEW AllPhotosAndDiskIDs;"
                      "DROP TABLE IF EXISTS Photos CASCADE;"
                      "DROP TABLE IF EXISTS Disk CASCADE;"
                      "DROP TABLE IF EXISTS RAM CASCADE;"
@@ -154,8 +159,8 @@ def addPhoto(photo: Photo) -> ReturnValue:
         return ReturnValue.BAD_PARAMS
     except DatabaseException.UNIQUE_VIOLATION as e:
         return ReturnValue.ALREADY_EXISTS
-    #except DatabaseException.FOREIGN_KEY_VIOLATION as e:
-        #return ReturnValue.ERROR
+    except DatabaseException.FOREIGN_KEY_VIOLATION as e:
+        return ReturnValue.ERROR
     except Exception as e:
         return ReturnValue.ERROR
     finally:
@@ -329,7 +334,8 @@ def getRAMByID(ramID: int) -> RAM:
     rows_effected, result = 0, ResultSet()
     try:
         conn = Connector.DBConnector()
-        rows_effected, result = conn.execute(f"SELECT * FROM RAM WHERE id={ramID}")
+        query = sql.SQL("SELECT * FROM RAM WHERE id={ramID};".format(ramID=ramID))
+        rows_effected, result = conn.execute(query)
         conn.commit()
         values = list(result.__getitem__(0).values())
         ram = RAM(*values)
@@ -513,7 +519,7 @@ def averagePhotosSizeOnDisk(diskID: int) -> float:
     try:
         conn = Connector.DBConnector()
         query = sql.SQL(
-            "SELECT AVG(size) AS average FROM Photos INNER JOIN (SELECT photo_id FROM Photos_In_Disk WHERE disk_id = {disk_id}) AS Rel_Photos ON id = photo_id;".format(disk_id=diskID))
+            "SELECT AVG(size) AS average FROM (SELECT size FROM AllPhotosAndDiskIDs WHERE disk_id = {diskID}) AS PD;".format(diskID=diskID))
         rows_effected, result = conn.execute(query)
         conn.commit()
         average = list(result.__getitem__(0).values())[0]
@@ -531,7 +537,7 @@ def getTotalRamOnDisk(diskID: int) -> int:
     try:
         conn = Connector.DBConnector()
         query = sql.SQL(
-            "SELECT SUM(size) as sum_total_ram FROM RAM INNER JOIN (SELECT ram_id from Ram_In_Disk WHERE disk_id = {disk_id}) AS Rel_Rams ON RAM.id = Rel_Rams.ram_id;".format(disk_id=diskID))
+            "SELECT SUM(size) as sum_total_ram FROM AllRamsAndDiskIDs WHERE disk_id = {diskID};".format(diskID=diskID))
         rows_effected, result = conn.execute(query)
         conn.commit()
         sum = list(result.__getitem__(0).values())[0]
@@ -551,8 +557,7 @@ def getCostForDescription(description: str) -> int:
         conn = Connector.DBConnector()
         query = sql.SQL(
             "SELECT SUM(size * cost_per_byte) AS total_cost "
-            "FROM ((SELECT id, size FROM Photos WHERE description = '{description}') AS P "
-            "INNER JOIN Photos_In_Disk AS PID ON P.id = PID.photo_id) AS DP "
+            "FROM (SELECT size, disk_id FROM AllPhotosAndDiskIDs WHERE description = '{description}') AS DP "
             "INNER JOIN Disk AS D ON D.id = DP.disk_id;".format(description=description))
         rows_effected, result = conn.execute(query)
         conn.commit()
@@ -594,10 +599,9 @@ def getPhotosCanBeAddedToDiskAndRAM(diskID: int) -> List[int]:
             "SELECT P.id "
             "FROM Photos AS P, Disk AS D "
             "WHERE (D.id = {diskID} AND (D.free_space - P.size >= 0) "
-            "AND P.size <= (SELECT COALESCE(SUM(size),0) FROM RAM INNER JOIN (SELECT ram_id FROM Ram_In_Disk WHERE disk_id = {diskID}) AS Rel_Rams ON RAM.id = Rel_Rams.ram_id)) "
+            "AND P.size <= (SELECT COALESCE(SUM(size),0) FROM AllRamsAndDiskIDs WHERE disk_id = {diskID})) "
             "ORDER BY P.id ASC "
             "LIMIT 5;".format(diskID=diskID))
-        # NEED TO SEE IF WE NEED TO ADD COALESCE
         rows_effected, result = conn.execute(query)
         conn.commit()
         for i in range(rows_effected):
@@ -636,8 +640,7 @@ def isDiskContainingAtLeastNumExists(description : str, num : int) -> bool:
         conn = Connector.DBConnector()
         query = sql.SQL(
             "SELECT COUNT(id) "
-            "FROM Photos WHERE (description = {description}) INNER JOIN (SELECT * from Photos_In_Disk) "
-            "ON id = photo_id "
+            "FROM AllPhotosAndDiskIDs WHERE (description = '{description}')"
             "GROUP BY disk_id "
             "HAVING COUNT(*) < {num}").format(description=description, num=num)
         rows_effected, result = conn.execute(query)
