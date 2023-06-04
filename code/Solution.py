@@ -43,15 +43,17 @@ def createTables():
                      "SELECT Photos.id AS id, Photos.description AS description, Photos.size AS size, Photos_In_Disk.disk_id AS disk_id FROM Photos INNER JOIN Photos_In_Disk ON Photos.id = Photos_In_Disk.photo_id; "
                      "CREATE VIEW AllRamsAndDiskIDs AS "
                      "SELECT RAM.id AS id, RAM.company AS company, RAM.size AS size, Ram_In_Disk.disk_id AS disk_id FROM RAM INNER JOIN Ram_In_Disk ON RAM.id = Ram_In_Disk.ram_id; "
+                     "CREATE VIEW Photo_Fit_On_Disk AS "
+                     "SELECT D1.id AS disk_id, P1.id AS photo_id "
+                     "FROM Disk AS D1, Photos AS P1 "
+                     "WHERE D1.free_space - P1.size >= 0;"
                      "CREATE VIEW Disk_And_Sum_Photos_On_Them AS "
                      "SELECT Sum_Photos_Fit_On_Disk.id AS disk_id, COALESCE(Sum_Photos_Fit_On_Disk.speed, 0) AS speed, COALESCE(SUM(Sum_Photos_Fit_On_Disk.photo_id), 0) AS sum_photos "
                      "FROM ("
                      "(SELECT id, speed FROM Disk) AS D "
-                     "FULL OUTER JOIN (SELECT D1.id AS disk_id, P1.id AS photo_id "
-                     "FROM Disk AS D1, Photos AS P1 "
-                     "WHERE D1.free_space - P1.size >= 0) AS Photo_Fit_On_Disk ON Photo_Fit_On_Disk.disk_id = D.id) "
-                     "AS Sum_Photos_Fit_On_Disk "
-                     "GROUP BY Sum_Photos_Fit_On_Disk.id, Sum_Photos_Fit_On_Disk.disk_id, Sum_Photos_Fit_On_Disk.speed;")
+                     "FULL OUTER JOIN Photo_Fit_On_Disk ON Photo_Fit_On_Disk.disk_id = D.id ) AS Sum_Photos_Fit_On_Disk "
+                     "GROUP BY Sum_Photos_Fit_On_Disk.id, Sum_Photos_Fit_On_Disk.speed; "
+                     )
         conn.commit()
     except DatabaseException.ConnectionInvalid as e:
         print(e)
@@ -110,7 +112,9 @@ def dropTables():
         conn = Connector.DBConnector()
         conn.execute("BEGIN;"
                      "DROP VIEW Disk_And_Sum_Photos_On_Them;"
+                     "DROP VIEW Photo_Fit_On_Disk;"
                      "DROP VIEW AllPhotosAndDiskIDs;"
+                     "DROP VIEW AllRamsAndDiskIDs;"
                      "DROP TABLE IF EXISTS Photos CASCADE;"
                      "DROP TABLE IF EXISTS Disk CASCADE;"
                      "DROP TABLE IF EXISTS RAM CASCADE;"
@@ -636,17 +640,19 @@ def isCompanyExclusive(diskID: int) -> bool:
 
 def isDiskContainingAtLeastNumExists(description : str, num : int) -> bool:
     conn = None
+    all_ids = []
     try:
         conn = Connector.DBConnector()
         query = sql.SQL(
-            "SELECT COUNT(id) "
-            "FROM AllPhotosAndDiskIDs WHERE (description = '{description}')"
+            "SELECT disk_id "
+            "FROM(SELECT * FROM AllPhotosAndDiskIDs WHERE description = '{description}') AS D "
             "GROUP BY disk_id "
-            "HAVING COUNT(*) < {num}").format(description=description, num=num)
+            "HAVING COUNT(*) >= {num}".format(description=description, num=num))
         rows_effected, result = conn.execute(query)
         conn.commit()
-        sum =list(result.__getitem__(0).values())[0]
-        if sum > 0:
+        for i in range(rows_effected):
+            all_ids += result.__getitem__(i).values()
+        if len(all_ids) > 0:
             return True
         return False
     except Exception as e:
@@ -661,13 +667,15 @@ def getDisksContainingTheMostData() -> List[int]:
         conn = Connector.DBConnector()
         query = sql.SQL(
             "SELECT disk_id "
-            "FROM("
-            "SELECT disk_id, SUM(size) AS total_data "
-            "FROM Photos INNER JOIN (SELECT * from Photos_In_Disk) "
-            "ON id = photo_id "
-            "GROUP BY disk_id "
-            "ORDER BY total_data ASC, disk_id ASC "
-            "LIMIT 5)")
+            "FROM ("
+            "(SELECT disk_id, COALESCE(SUM(size), 0) AS total_data "
+            "FROM AllPhotosAndDiskIDs "
+            "GROUP BY disk_id) "
+            "UNION "
+            "(SELECT id AS disk_id, 0 FROM Disk WHERE id NOT IN (SELECT DISTINCT disk_id FROM AllPhotosAndDiskIDs)) "
+            ") AS D "
+            "ORDER BY total_data DESC, disk_id ASC "
+            "LIMIT 5")
         rows_effected, result = conn.execute(query)
         conn.commit()
         for i in range(rows_effected):
@@ -749,13 +757,20 @@ if __name__ == '__main__':
     clearTables()
     dropTables()
     createTables()
-    print("0", averagePhotosSizeOnDisk(1))
     addDisk(Disk(1, "DELL", 10, 15, 10))
-    addDisk(Disk(1,"NOA", 10, 10, 10))
+    addDisk(Disk(2, "NVIDIA", 10, 15, 10))
+    print(addPhoto(Photo(1, "stuff", 3)))
+    print(addPhoto(Photo(2, "stuff", 4)))
+    print(addPhoto(Photo(3, "stuff", 6)))
+    print(addPhotoToDisk(Photo(1, "stuff", 3), 1))
+    print(addPhotoToDisk(Photo(2, "stuff", 4), 1))
+    print(addPhotoToDisk(Photo(3, "stuff", 6), 1))
+    print(getDisksContainingTheMostData())
+
     disk = getDiskByID(1)
     print("15", disk.getFreeSpace())
     print("0", averagePhotosSizeOnDisk(1))
-    print(addPhoto(Photo(1, "stuff", 3)))
+
     print("0", averagePhotosSizeOnDisk(1))
     print(addPhotoToDisk(Photo(1, "stuff", 3), 1))
     disk = getDiskByID(1)
